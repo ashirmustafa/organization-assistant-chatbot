@@ -121,7 +121,7 @@ def parse_date_input(date_str):
 
 def get_user_calendar(token, user_id, start_date_str=None, end_date_str=None):
     """
-    Fetches calendar events for a user
+    Fetches calendar events for a user and converts times to Pakistan Standard Time (UTC+5)
     """
     headers = {
         'Authorization': f'Bearer {token}',
@@ -160,13 +160,61 @@ def get_user_calendar(token, user_id, start_date_str=None, end_date_str=None):
         
         formatted = []
         for event in events:
-            formatted.append({
-                'subject': event.get('subject', 'No Subject'),
-                'start': event['start']['dateTime'],
-                'end': event['end']['dateTime'],
-                'location': event.get('location', {}).get('displayName', 'No Location'),
-                'organizer': event.get('organizer', {}).get('emailAddress', {}).get('name', 'Unknown')
-            })
+            # Get UTC times from Graph API
+            utc_start = event['start']['dateTime']
+            utc_end = event['end']['dateTime']
+            
+            try:
+                # Remove 'Z' suffix if present and handle Microsoft's 7-digit microseconds
+                utc_start_clean = utc_start.rstrip('Z')
+                utc_end_clean = utc_end.rstrip('Z')
+                
+                # Split into datetime and fractional seconds
+                if '.' in utc_start_clean:
+                    # Has fractional seconds - truncate to 6 digits max for Python
+                    date_part, frac_part = utc_start_clean.split('.')
+                    utc_start_clean = f"{date_part}.{frac_part[:6]}"  # Keep only 6 digits
+                
+                if '.' in utc_end_clean:
+                    date_part, frac_part = utc_end_clean.split('.')
+                    utc_end_clean = f"{date_part}.{frac_part[:6]}"  # Keep only 6 digits
+                
+                # Parse datetime
+                try:
+                    start_dt = datetime.strptime(utc_start_clean, '%Y-%m-%dT%H:%M:%S.%f')
+                    end_dt = datetime.strptime(utc_end_clean, '%Y-%m-%dT%H:%M:%S.%f')
+                except ValueError:
+                    # No fractional seconds
+                    start_dt = datetime.strptime(utc_start_clean, '%Y-%m-%dT%H:%M:%S')
+                    end_dt = datetime.strptime(utc_end_clean, '%Y-%m-%dT%H:%M:%S')
+                
+                # Convert UTC to Pakistan Standard Time (UTC+5)
+                pkt_start = start_dt + timedelta(hours=5)
+                pkt_end = end_dt + timedelta(hours=5)
+                
+                # Format back to string
+                formatted.append({
+                    'subject': event.get('subject', 'No Subject'),
+                    'start': pkt_start.strftime('%Y-%m-%dT%H:%M:%S'),  # Now in PKT
+                    'end': pkt_end.strftime('%Y-%m-%dT%H:%M:%S'),      # Now in PKT
+                    'location': event.get('location', {}).get('displayName', 'No Location'),
+                    'organizer': event.get('organizer', {}).get('emailAddress', {}).get('name', 'Unknown'),
+                    'timezone': 'PKT'  # Indicator that times are in Pakistan time
+                })
+                
+                print(f"✅ Converted '{event.get('subject')}': {utc_start} → {pkt_start.strftime('%H:%M')} PKT")
+                
+            except Exception as parse_error:
+                # If parsing fails, fall back to original times with warning
+                print(f"⚠️ Could not parse time for '{event.get('subject')}': {parse_error}")
+                formatted.append({
+                    'subject': event.get('subject', 'No Subject'),
+                    'start': utc_start,
+                    'end': utc_end,
+                    'location': event.get('location', {}).get('displayName', 'No Location'),
+                    'organizer': event.get('organizer', {}).get('emailAddress', {}).get('name', 'Unknown'),
+                    'timezone': 'UTC'  # Warning: couldn't convert
+                })
         
         return formatted, start_time.strftime('%Y-%m-%d'), end_time.strftime('%Y-%m-%d')
         
@@ -177,7 +225,7 @@ def get_user_calendar(token, user_id, start_date_str=None, end_date_str=None):
 
 def create_calendar_event(token, organizer_email, event_details):
     """
-    NEW: Creates a calendar event via Microsoft Graph API
+    Creates a calendar event via Microsoft Graph API
     """
     headers = {
         'Authorization': f'Bearer {token}',
@@ -276,9 +324,90 @@ def create_calendar_event(token, organizer_email, event_details):
         }
 
 
+def send_email(token, sender_email, email_details):
+    """
+    NEW: Sends an email via Microsoft Graph API
+    """
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Build recipients list
+    to_recipients = []
+    for recipient in email_details.get('recipients', []):
+        to_recipients.append({
+            "emailAddress": {
+                "address": recipient['email'],
+                "name": recipient.get('name', recipient['email'])
+            }
+        })
+    
+    # Build CC list
+    cc_recipients = []
+    for cc in email_details.get('cc', []):
+        cc_recipients.append({
+            "emailAddress": {
+                "address": cc['email'],
+                "name": cc.get('name', cc['email'])
+            }
+        })
+    
+    # Build email payload
+    message = {
+        "message": {
+            "subject": email_details['subject'],
+            "body": {
+                "contentType": "HTML",
+                "content": email_details['body']
+            },
+            "toRecipients": to_recipients
+        },
+        "saveToSentItems": "true"
+    }
+    
+    # Add CC if provided
+    if cc_recipients:
+        message["message"]["ccRecipients"] = cc_recipients
+    
+    print(f"📤 Sending email from: {sender_email}")
+    print(f"📋 Email payload: {json.dumps(message, indent=2)}")
+    
+    url = f"https://graph.microsoft.com/v1.0/users/{sender_email}/sendMail"
+    
+    try:
+        response = requests.post(url, headers=headers, json=message, timeout=15)
+        
+        if response.status_code == 202:
+            print(f"✅ Email sent successfully!")
+            return {
+                "success": True,
+                "message": "Email sent successfully",
+                "details": {
+                    "subject": email_details['subject'],
+                    "recipients": [r['email'] for r in email_details['recipients']],
+                    "cc": [c['email'] for c in email_details.get('cc', [])]
+                }
+            }
+        else:
+            error_text = response.text
+            print(f"❌ Email failed: {response.status_code} - {error_text}")
+            return {
+                "success": False,
+                "error": f"Failed to send email: {response.status_code}",
+                "details": error_text
+            }
+    except Exception as e:
+        print(f"❌ Exception sending email: {e}")
+        return {
+            "success": False,
+            "error": f"Exception sending email: {str(e)}"
+        }
+
+
 def lambda_handler(event, context):
     """
-    Main handler - Routes between GET and CREATE actions
+    Main handler - Routes between GET, CREATE, and SEND EMAIL actions
     """
     try:
         body = json.loads(event.get('body', '{}'))
@@ -302,6 +431,18 @@ def lambda_handler(event, context):
             print("📝 Handling CREATE event request")
             
             result = create_calendar_event(token, body.get('organizer_id'), body)
+            
+            return {
+                'statusCode': 200 if result.get('success') else 500,
+                'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps(result)
+            }
+        
+        elif action == 'send_email':
+            # SEND EMAIL (NEW)
+            print("📧 Handling SEND EMAIL request")
+            
+            result = send_email(token, body.get('sender_email'), body)
             
             return {
                 'statusCode': 200 if result.get('success') else 500,

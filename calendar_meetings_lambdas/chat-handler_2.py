@@ -1,4 +1,3 @@
-
 import json
 import boto3
 from datetime import datetime
@@ -35,7 +34,6 @@ CALENDAR_TOOL = {
     }
 }
 
-# NEW: Define the calendar CREATE tool
 CREATE_EVENT_TOOL = {
     "toolSpec": {
         "name": "create_calendar_event",
@@ -59,11 +57,11 @@ CREATE_EVENT_TOOL = {
                     "attendees": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of attendee names to invite. Can be first names, full names, or emails. Example: ['Ehsaan', 'Abdul Majid', 'ashir@puffersoft.com']"
+                        "description": "List of attendee names to invite. Can be first names, full names, or emails. Example: ['Ehsaan', 'Abdul Majid']"
                     },
                     "location": {
                         "type": "string",
-                        "description": "Meeting location (optional). Default is 'Microsoft Teams Meeting' if is_online=true"
+                        "description": "Meeting location (optional). Default is 'Microsoft Teams Meeting'"
                     },
                     "is_online": {
                         "type": "boolean",
@@ -76,9 +74,41 @@ CREATE_EVENT_TOOL = {
     }
 }
 
+EMAIL_TOOL = {
+    "toolSpec": {
+        "name": "send_email",
+        "description": "Sends an email to one or more recipients. Use when user wants to send, email, or message someone.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "recipients": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of recipient names or emails. Example: ['Ehsaan', 'Abdul Majid']"
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email message body/content"
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional CC recipients (names or emails)"
+                    }
+                },
+                "required": ["recipients", "subject", "body"]
+            }
+        }
+    }
+}
+
 def lambda_handler(event, context):
     try:
-        # Parse request
         body = json.loads(event.get("body", "{}"))
         message = body.get("message")
         history = body.get("history", [])
@@ -87,67 +117,66 @@ def lambda_handler(event, context):
         print(f"📩 Received message: {message}")
         print(f"👤 User context: {user_context}")
         
-        # Get current date for system prompt
         now = datetime.utcnow()
         current_date = now.strftime('%Y-%m-%d')
         current_time = now.strftime('%H:%M')
-        current_day = now.strftime('%A')
         
-        # Build system prompt
         system_prompt = [{
             "text": f"""You are a helpful calendar assistant. The logged-in user is {user_context.get('name', 'Unknown')} ({user_context.get('email', 'unknown@email.com')}).
 
 CURRENT DATE: {current_date}
 CURRENT TIME: {current_time} UTC
+USER TIMEZONE: Pakistan Standard Time (UTC+5)
 
-CRITICAL CONSTRAINTS:
-1. ONLY CREATE MEETINGS: You can only create 'Meeting' events with start/end times and fetch calendar details.
-2. REFUSE OTHER EVENTS: If asked for 'All Day' events, 'Tasks', 'Reminders', or 'Birthdays', you MUST say: "I am only capable of creating meeting events at the moment."
-3. TIMEZONE HANDLING: 
-   - Extract the date and time EXACTLY as the user says it.
-   - If user says "3 PM", use "15:00". 
-   - DO NOT subtract or add hours. The backend tool handles the timezone conversion.
+CAPABILITIES:
+✅ I CAN: Check calendars, compare schedules, find availability
+✅ I CAN: Create meetings with attendees (Teams links included)
+✅ I CAN: Send emails to one or more people
+❌ I CANNOT: Create personal events (use calendar app directly)
+
+TIMEZONE HANDLING:
+- Calendar times are already converted to Pakistan time (PKT)
+- When displaying times, mention "Pakistan time" or "PKT"
+- For creating meetings: extract time EXACTLY as user says it (e.g., "3 PM" → "15:00")
 
 CALENDAR VIEWING:
-When checking calendars, you can specify dates in two ways:
+When checking calendars, you can specify dates:
 1. Specific dates: Use YYYY-MM-DD format (e.g., "2026-01-29")
 2. Relative terms: Use "today" or "tomorrow"
 
-When you receive a tool result with multiple matching users (indicated by a 'count' field greater than 1), format it as a clear numbered list and remember it in the conversation context.
+When you receive a tool result with multiple matching users (count > 1), format as numbered list.
+If user responds with just a number, they are selecting that item.
 
-If the user responds with just a number after you've shown them a list, they are selecting that numbered item from the list you just showed.
-
-You can call multiple tools in parallel when needed (e.g., checking multiple people's calendars at once for availability comparison).
+You can call multiple tools in parallel when needed.
 
 EVENT CREATION:
-When creating events:
-1. Extract date/time in 'YYYY-MM-DD HH:MM' format (24-hour clock)
-   - "tomorrow at 3pm" → "2026-01-30 15:00"
-   - "Feb 15 at 2:30pm" → "2026-02-15 14:30"
-   - "next Monday at 10am" → calculate the date → "2026-02-02 10:00"
+Extract date/time in 'YYYY-MM-DD HH:MM' format (24-hour):
+- "tomorrow at 3pm" → "2026-01-30 15:00"
+- "Feb 15 at 2:30pm" → "2026-02-15 14:30"
 
-2. If end time not specified, default to 1 hour after start time
+If end time not specified, default to 1 hour after start.
+Default to Teams meeting unless specified otherwise.
 
-3. If subject not provided, generate one like "Meeting with [attendees]"
+EMAIL SENDING:
+CRITICAL: ALWAYS use the send_email tool when user asks to send email.
+NEVER say "email sent" without actually calling the tool.
+Even if you just sent an email, you MUST call the tool again for each new request.
 
-4. Default to online Teams meeting (is_online: true) unless user specifies otherwise
+Recipients can be names (resolved to emails) or direct emails.
+Subject and body must be provided.
+CC is optional.
 
-5. Attendee names will be resolved to emails automatically - just pass the names as the user provides them
+If user says "send another email" or "send it again", you MUST call the send_email tool again.
+When user says "my calendar", use logged-in user's name: {user_context.get('name', 'Unknown')}.
 
-When the user asks about "my calendar", "my schedule", or uses "me"/"my", use the logged-in user's name: {user_context.get('name', 'Unknown')}.
-
-Always tell the user what specific dates you checked or what event you created with full details.
-
-Always provide clear, well-formatted responses with complete event details including subject, time, location, and organizer."""
+Always provide clear responses with complete details."""
         }]
         
-        # Build messages for Bedrock
         messages = []
         for turn in history:
             role = "user" if turn.get("role") == "user" else "assistant"
             raw_content = turn.get("content", "")
             
-            # Extract text from Gradio's format
             if isinstance(raw_content, list):
                 text_content = ""
                 for item in raw_content:
@@ -162,39 +191,28 @@ Always provide clear, well-formatted responses with complete event details inclu
             
             messages.append({"role": role, "content": [{"text": text_content}]})
         
-        # Add current user message
         messages.append({"role": "user", "content": [{"text": str(message)}]})
         
-        # Call Bedrock with BOTH tools
-        print("🤖 Calling Bedrock with tool support...")
+        print("🤖 Calling Bedrock...")
         response = bedrock.converse(
             modelId="us.anthropic.claude-haiku-4-5-20251001-v1:0",
             messages=messages,
             system=system_prompt,
-            toolConfig={
-                "tools": [CALENDAR_TOOL, CREATE_EVENT_TOOL]  # Both tools available
-            }
+            toolConfig={"tools": [CALENDAR_TOOL, CREATE_EVENT_TOOL, EMAIL_TOOL]}
         )
         
         print(f"📤 Bedrock response: {json.dumps(response, default=str)}")
         
-        # Check if Bedrock wants to use a tool
         stop_reason = response.get("stopReason")
         
         if stop_reason == "tool_use":
-            print("🔧 Bedrock requested tool use")
+            print("🔧 Tool use requested")
             
-            # Extract ALL tool uses from response (not just the first one)
             content_blocks = response["output"]["message"]["content"]
-            tool_use_blocks = []
+            tool_use_blocks = [block["toolUse"] for block in content_blocks if "toolUse" in block]
             
-            for block in content_blocks:
-                if "toolUse" in block:
-                    tool_use_blocks.append(block["toolUse"])
+            print(f"🔨 Found {len(tool_use_blocks)} tool(s)")
             
-            print(f"🔨 Found {len(tool_use_blocks)} tool use(s)")
-            
-            # Process each tool use
             tool_results = []
             
             for tool_use_block in tool_use_blocks:
@@ -202,137 +220,97 @@ Always provide clear, well-formatted responses with complete event details inclu
                 tool_input = tool_use_block["input"]
                 tool_use_id = tool_use_block["toolUseId"]
                 
-                print(f"🔨 Processing tool: {tool_name}")
-                print(f"📥 Input BEFORE processing: {tool_input}")
+                print(f"🔨 Tool: {tool_name}")
+                print(f"📥 Input: {tool_input}")
                 
-                # Handle different tools
                 if tool_name == "get_calendar_events":
-                    # Handle "me" keyword for GET events
                     if "name" in tool_input:
                         extracted_name = tool_input.get("name", "").strip().lower()
-                        
                         if extracted_name in ["me", "my", "mine", "i", "myself", ""] or "my" in extracted_name:
                             if user_context.get("name"):
                                 tool_input["name"] = user_context.get("name")
-                                print(f"🔄 Replaced '{extracted_name}' with logged-in user: {tool_input['name']}")
                     
-                    print(f"📥 Input AFTER processing: {tool_input}")
-                    
-                    # Call calendar Lambda for GET
                     try:
                         calendar_response = lambda_client.invoke(
                             FunctionName="puffersoft-graph-action",
                             InvocationType="RequestResponse",
-                            Payload=json.dumps({
-                                "body": json.dumps(tool_input)
-                            })
+                            Payload=json.dumps({"body": json.dumps(tool_input)})
                         )
                         
                         calendar_result = json.loads(calendar_response["Payload"].read())
                         calendar_body = json.loads(calendar_result.get("body", "{}"))
                         
-                        print(f"📅 Calendar GET result: {json.dumps(calendar_body, indent=2)}")
+                        print(f"📅 Result: {json.dumps(calendar_body, indent=2)}")
                         
                         tool_results.append({
                             "toolUseId": tool_use_id,
                             "content": [{"json": calendar_body}]
                         })
-                        
                     except Exception as e:
-                        print(f"❌ Error in GET: {str(e)}")
+                        print(f"❌ Error: {str(e)}")
                         tool_results.append({
                             "toolUseId": tool_use_id,
-                            "content": [{"json": {"error": f"Failed to fetch calendar: {str(e)}"}}]
+                            "content": [{"json": {"error": f"Failed: {str(e)}"}}]
                         })
                 
                 elif tool_name == "create_calendar_event":
-                    # NEW: Handle event creation
-                    print("📝 Creating calendar event...")
+                    print("📝 Creating event...")
                     
-                    # Extract attendee names
                     attendee_names = tool_input.get("attendees", [])
-                    print(f"👥 Resolving {len(attendee_names)} attendee(s): {attendee_names}")
-                    
-                    # Resolve each attendee name to email
                     resolved_attendees = []
-                    unresolved_attendees = []
+                    unresolved = []
                     
-                    for attendee_name in attendee_names:
-                        # Search for user
+                    for name in attendee_names:
                         try:
                             search_response = lambda_client.invoke(
                                 FunctionName="puffersoft-graph-action",
                                 InvocationType="RequestResponse",
-                                Payload=json.dumps({
-                                    "body": json.dumps({"name": attendee_name})
-                                })
+                                Payload=json.dumps({"body": json.dumps({"name": name})})
                             )
                             
                             search_result = json.loads(search_response["Payload"].read())
                             search_body = json.loads(search_result.get("body", "{}"))
                             
-                            # Check if single user found
                             if "user" in search_body:
                                 user = search_body["user"]
-                                resolved_attendees.append({
-                                    "name": user["name"],
-                                    "email": user["email"]
-                                })
-                                print(f"✅ Resolved '{attendee_name}' → {user['name']} ({user['email']})")
-                            
-                            # Check if multiple users found
+                                resolved_attendees.append({"name": user["name"], "email": user["email"]})
+                                print(f"✅ {name} → {user['email']}")
                             elif "count" in search_body and search_body["count"] > 1:
-                                # Return to user for clarification
                                 users_list = search_body.get("users", [])
-                                clarification_text = f"I found {search_body['count']} people named '{attendee_name}':\n\n"
+                                clarification = f"Found {search_body['count']} people named '{name}':\n\n"
                                 for idx, u in enumerate(users_list, 1):
-                                    clarification_text += f"{idx}. {u['name']} - {u['email']}\n"
-                                clarification_text += f"\nPlease specify which '{attendee_name}' you meant before I create the event."
+                                    clarification += f"{idx}. {u['name']} - {u['email']}\n"
+                                clarification += f"\nWhich '{name}'?"
                                 
                                 tool_results.append({
                                     "toolUseId": tool_use_id,
                                     "content": [{"json": {
                                         "error": "Ambiguous attendee",
-                                        "message": clarification_text,
-                                        "ambiguous_attendee": attendee_name,
+                                        "message": clarification,
                                         "matches": users_list
                                     }}]
                                 })
-                                
-                                # Stop processing this event creation
-                                unresolved_attendees.append(attendee_name)
+                                unresolved.append(name)
                                 break
-                            
-                            # User not found
                             else:
-                                unresolved_attendees.append(attendee_name)
-                                print(f"❌ Could not find user '{attendee_name}'")
-                        
+                                unresolved.append(name)
                         except Exception as e:
-                            print(f"❌ Error searching for '{attendee_name}': {str(e)}")
-                            unresolved_attendees.append(attendee_name)
+                            print(f"❌ Error: {e}")
+                            unresolved.append(name)
                     
-                    # If there are unresolved attendees (not due to ambiguity), report error
-                    if unresolved_attendees and not any("Ambiguous" in str(r) for r in tool_results):
+                    if unresolved and not any("Ambiguous" in str(r) for r in tool_results):
                         tool_results.append({
                             "toolUseId": tool_use_id,
-                            "content": [{"json": {
-                                "error": f"Could not find the following attendees: {', '.join(unresolved_attendees)}. Please check the spelling or provide their full names."
-                            }}]
+                            "content": [{"json": {"error": f"Could not find: {', '.join(unresolved)}"}}]
                         })
                         continue
                     
-                    # If ambiguity was found, we already added the result - skip creation
-                    if unresolved_attendees:
+                    if unresolved:
                         continue
                     
-                    # All attendees resolved - create the event
-                    print(f"✅ All attendees resolved: {resolved_attendees}")
-                    
-                    # Build event creation payload
                     event_payload = {
                         "action": "create",
-                        "organizer_id": user_context.get("email"),  # Logged-in user is organizer
+                        "organizer_id": user_context.get("email"),
                         "organizer_name": user_context.get("name"),
                         "subject": tool_input.get("subject"),
                         "start_datetime": tool_input.get("start_datetime"),
@@ -342,61 +320,179 @@ Always provide clear, well-formatted responses with complete event details inclu
                         "is_online": tool_input.get("is_online", True)
                     }
                     
-                    print(f"📤 Sending event creation request: {json.dumps(event_payload, indent=2)}")
-                    
-                    # Call calendar Lambda for CREATE
                     try:
                         create_response = lambda_client.invoke(
                             FunctionName="puffersoft-graph-action",
                             InvocationType="RequestResponse",
-                            Payload=json.dumps({
-                                "body": json.dumps(event_payload)
-                            })
+                            Payload=json.dumps({"body": json.dumps(event_payload)})
                         )
                         
                         create_result = json.loads(create_response["Payload"].read())
                         create_body = json.loads(create_result.get("body", "{}"))
                         
-                        print(f"📅 Event CREATE result: {json.dumps(create_body, indent=2)}")
+                        print(f"📅 Result: {json.dumps(create_body, indent=2)}")
                         
                         tool_results.append({
                             "toolUseId": tool_use_id,
                             "content": [{"json": create_body}]
                         })
-                        
                     except Exception as e:
-                        print(f"❌ Error creating event: {str(e)}")
+                        print(f"❌ Error: {e}")
                         tool_results.append({
                             "toolUseId": tool_use_id,
-                            "content": [{"json": {"error": f"Failed to create event: {str(e)}"}}]
+                            "content": [{"json": {"error": f"Failed: {str(e)}"}}]
+                        })
+                
+                elif tool_name == "send_email":
+                    print("📧 Sending email...")
+                    
+                    recipient_names = tool_input.get("recipients", [])
+                    
+                    if not recipient_names:
+                        tool_results.append({
+                            "toolUseId": tool_use_id,
+                            "content": [{"json": {
+                                "success": False,
+                                "message": "❌ No recipients provided"
+                            }}]
+                        })
+                        continue
+                    
+                    resolved_recipients = []
+                    unresolved = []
+                    
+                    for name in recipient_names:
+                        if "@" in name:
+                            resolved_recipients.append({"email": name, "name": name})
+                            continue
+                        
+                        try:
+                            search_response = lambda_client.invoke(
+                                FunctionName="puffersoft-graph-action",
+                                InvocationType="RequestResponse",
+                                Payload=json.dumps({"body": json.dumps({"name": name})})
+                            )
+                            
+                            search_result = json.loads(search_response["Payload"].read())
+                            search_body = json.loads(search_result.get("body", "{}"))
+                            
+                            if "user" in search_body:
+                                user = search_body["user"]
+                                resolved_recipients.append({"name": user["name"], "email": user["email"]})
+                                print(f"✅ {name} → {user['email']}")
+                            elif "count" in search_body and search_body["count"] > 1:
+                                users_list = search_body.get("users", [])
+                                clarification = f"Found {search_body['count']} people named '{name}':\n\n"
+                                for idx, u in enumerate(users_list, 1):
+                                    clarification += f"{idx}. {u['name']} - {u['email']}\n"
+                                clarification += f"\nWhich '{name}'?"
+                                
+                                tool_results.append({
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"json": {
+                                        "success": False,
+                                        "message": clarification,
+                                        "matches": users_list
+                                    }}]
+                                })
+                                unresolved.append(name)
+                                break
+                            else:
+                                unresolved.append(name)
+                        except Exception as e:
+                            print(f"❌ Error: {e}")
+                            unresolved.append(name)
+                    
+                    if unresolved:
+                        if not any("Found" in str(r) for r in tool_results):
+                            tool_results.append({
+                                "toolUseId": tool_use_id,
+                                "content": [{"json": {
+                                    "success": False,
+                                    "message": f"❌ Could not find: {', '.join(unresolved)}"
+                                }}]
+                            })
+                        continue
+                    
+                    cc_names = tool_input.get("cc", [])
+                    resolved_cc = []
+                    if cc_names:
+                        for name in cc_names:
+                            if "@" in name:
+                                resolved_cc.append({"email": name, "name": name})
+                    
+                    email_payload = {
+                        "action": "send_email",
+                        "sender_email": user_context.get("email"),
+                        "sender_name": user_context.get("name"),
+                        "recipients": resolved_recipients,
+                        "cc": resolved_cc,
+                        "subject": tool_input.get("subject"),
+                        "body": tool_input.get("body")
+                    }
+                    
+                    try:
+                        email_response = lambda_client.invoke(
+                            FunctionName="puffersoft-graph-action",
+                            InvocationType="RequestResponse",
+                            Payload=json.dumps({"body": json.dumps(email_payload)})
+                        )
+                        
+                        email_result = json.loads(email_response["Payload"].read())
+                        email_body = json.loads(email_result.get("body", "{}"))
+                        
+                        print(f"📧 Result: {json.dumps(email_body, indent=2)}")
+                        
+                        if email_body.get("success"):
+                            recipient_emails = ', '.join([r['email'] for r in resolved_recipients])
+                            tool_results.append({
+                                "toolUseId": tool_use_id,
+                                "content": [{"json": {
+                                    "success": True,
+                                    "message": f"✅ Email sent to: {recipient_emails}",
+                                    "subject": tool_input.get("subject")
+                                }}]
+                            })
+                        else:
+                            error_msg = email_body.get("error", "Unknown error")
+                            tool_results.append({
+                                "toolUseId": tool_use_id,
+                                "content": [{"json": {
+                                    "success": False,
+                                    "message": f"❌ FAILED: {error_msg}"
+                                }}]
+                            })
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                        import traceback
+                        print(traceback.format_exc())
+                        tool_results.append({
+                            "toolUseId": tool_use_id,
+                            "content": [{"json": {
+                                "success": False,
+                                "message": f"❌ System error: {str(e)}"
+                            }}]
                         })
             
-            # Build tool results for Bedrock - pass ALL results back
             messages.append({
                 "role": "assistant",
                 "content": response["output"]["message"]["content"]
             })
             
-            # Add all tool results in a single user message
             messages.append({
                 "role": "user",
                 "content": [{"toolResult": result} for result in tool_results]
             })
             
-            print(f"📤 Sending {len(tool_results)} tool result(s) back to Bedrock")
+            print(f"📤 Sending {len(tool_results)} result(s) to Bedrock")
             
-            # Call Bedrock again with the tool results
-            print("🤖 Calling Bedrock again with tool result(s)...")
             final_response = bedrock.converse(
                 modelId="us.anthropic.claude-haiku-4-5-20251001-v1:0",
                 messages=messages,
                 system=system_prompt,
-                toolConfig={
-                    "tools": [CALENDAR_TOOL, CREATE_EVENT_TOOL]
-                }
+                toolConfig={"tools": [CALENDAR_TOOL, CREATE_EVENT_TOOL, EMAIL_TOOL]}
             )
             
-            # Extract final text response
             final_text = final_response["output"]["message"]["content"][0]["text"]
             
             return {
@@ -409,7 +505,6 @@ Always provide clear, well-formatted responses with complete event details inclu
                 "body": json.dumps({"response": final_text})
             }
         
-        # No tool use - return direct response
         output_text = response["output"]["message"]["content"][0]["text"]
         
         return {
@@ -423,11 +518,11 @@ Always provide clear, well-formatted responses with complete event details inclu
         }
         
     except Exception as e:
-        print(f"❌ Lambda Error: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         import traceback
         print(traceback.format_exc())
         return {
-            "statusCode": 500, 
+            "statusCode": 500,
             "headers": {
                 "Content-Type": "application/json",
                 "Access-Control-Allow-Origin": "*"
