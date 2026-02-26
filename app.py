@@ -131,6 +131,12 @@ if __name__ == "__main__":
             ssl_verify=False,
             share=False
         )
+    else:
+        print("⚠️ SSL certs not found, launching without SSL (Nginx handles it)")
+        demo.launch(
+            server_name="0.0.0.0",
+            server_port=7860
+        )
         
         
         
