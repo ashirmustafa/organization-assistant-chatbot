@@ -9,7 +9,7 @@ API_GATEWAY_URL = "https://yy9z5xqkqe.execute-api.eu-north-1.amazonaws.com/prod/
 COGNITO_DOMAIN = "ap-northeast-3a7zupoaxl.auth.ap-northeast-3.amazoncognito.com"
 CLIENT_ID = "5q534ed2r1lan9m606bsnpnood"
 CLIENT_SECRET = "1gaq1nib9oijqpmkr4nedqalu8naqf7k363atib3gf4en5pcms3e"
-REDIRECT_URI = "https://chatbot.awssolutionsprovider.com/"
+REDIRECT_URI = "https://localhost:7860/"
 
 LOGIN_URL = f"https://{COGNITO_DOMAIN}/login?client_id={CLIENT_ID}&response_type=code&scope=email+openid+profile&redirect_uri={REDIRECT_URI}"
 TOKEN_URL = f"https://{COGNITO_DOMAIN}/oauth2/token"
