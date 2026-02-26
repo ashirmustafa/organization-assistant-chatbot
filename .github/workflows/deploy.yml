@@ -11,6 +11,7 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: AWS-Deployment 
 
     steps:
       - name: Checkout code
