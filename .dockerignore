@@ -1,0 +1,6 @@
+__pycache__/
+calendar_meetings_lambdas/
+app_deployment.py
+*.pyc
+.env
+.git

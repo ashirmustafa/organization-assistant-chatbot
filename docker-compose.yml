@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  puffersoft-ai:
+    build: .
+    container_name: puffersoft-ai
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./localhost+2.pem:/app/localhost+2.pem:ro
+      - ./localhost+2-key.pem:/app/localhost+2-key.pem:ro
+    restart: unless-stopped
