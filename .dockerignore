@@ -4,3 +4,5 @@ app_deployment.py
 *.pyc
 .env
 .git
+localhost+2.pem
+localhost+2-key.pem

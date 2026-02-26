@@ -121,22 +121,28 @@ with gr.Blocks(title="Puffersoft AI") as demo:
 if __name__ == "__main__":
     CERT_FILE = "localhost+2.pem"
     KEY_FILE = "localhost+2-key.pem"
+    
+    print("⚠️ SSL certs not found, launching without SSL (Nginx handles it)")
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860
+    )
 
-    if os.path.exists(CERT_FILE):
-        demo.launch(
-            server_name="0.0.0.0",
-            server_port=7860,
-            ssl_certfile=CERT_FILE,
-            ssl_keyfile=KEY_FILE,
-            ssl_verify=False,
-            share=False
-        )
-    else:
-        print("⚠️ SSL certs not found, launching without SSL (Nginx handles it)")
-        demo.launch(
-            server_name="0.0.0.0",
-            server_port=7860
-        )
+    # if os.path.exists(CERT_FILE):
+    #     demo.launch(
+    #         server_name="0.0.0.0",
+    #         server_port=7860,
+    #         ssl_certfile=CERT_FILE,
+    #         ssl_keyfile=KEY_FILE,
+    #         ssl_verify=False,
+    #         share=False
+    #     )
+    # else:
+    #     print("⚠️ SSL certs not found, launching without SSL (Nginx handles it)")
+    #     demo.launch(
+    #         server_name="0.0.0.0",
+    #         server_port=7860
+    #     )
         
         
         
