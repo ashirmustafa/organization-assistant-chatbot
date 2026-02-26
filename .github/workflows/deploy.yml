@@ -51,13 +51,11 @@ jobs:
             docker stop puffersoft-ai || true
             docker rm puffersoft-ai || true
 
-            # Run new container
+            # Run new container (without cert mounts)
             docker run -d \
               --name puffersoft-ai \
               --restart unless-stopped \
               -p 7860:7860 \
-              -v /home/ubuntu/certs/localhost+2.pem:/app/localhost+2.pem:ro \
-              -v /home/ubuntu/certs/localhost+2-key.pem:/app/localhost+2-key.pem:ro \
               $IMAGE_NAME:latest
 
             # Clean up old images
